@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fake Job Posting Detector</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { padding: 28px; background: #f7f9fc; }
+  .card { box-shadow: 0 6px 18px rgba(30,30,80,0.06); }
+  .progress { height: 16px; }
+  small.hint { color: #666; }
+  pre.raw { white-space: pre-wrap; word-break: break-word; background:#fff; padding:10px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="row justify-content-center">
+    <div class="col-lg-9">
+      <div class="card p-4">
+        <h3>ML-Based Fake Job Posting Detector</h3>
+        <p class="mb-1"><small class="hint">Fill fields or paste whole posting into Raw text. Optionally request explanations (LIME/SHAP).</small></p>
+        <hr>
+
+        <form id="jobForm">
+          <div class="mb-2"><label class="form-label">Title</label>
+            <input id="title" class="form-control" placeholder="e.g., Junior Data Scientist"></div>
+
+          <div class="mb-2"><label class="form-label">Company profile</label>
+            <textarea id="company_profile" class="form-control" rows="2"></textarea></div>
+
+          <div class="mb-2"><label class="form-label">Description</label>
+            <textarea id="description" class="form-control" rows="6"></textarea></div>
+
+          <div class="mb-2"><label class="form-label">Requirements</label>
+            <textarea id="requirements" class="form-control" rows="3"></textarea></div>
+
+          <div class="mb-2"><label class="form-label">Benefits</label>
+            <textarea id="benefits" class="form-control" rows="2"></textarea></div>
+
+          <div class="mb-2"><label class="form-label">Raw text (optional - overrides other fields)</label>
+            <textarea id="raw_text" class="form-control" rows="6" placeholder="Paste full job posting here"></textarea></div>
+
+          <div class="row">
+            <div class="col-md-6">
+              <label class="form-label">Explain using</label>
+              <select id="explain" class="form-select">
+                <option value="">None</option>
+                <option value="lime">LIME (local)</option>
+                <option value="shap">SHAP (global/local)</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Fake threshold</label>
+              <input id="threshold" class="form-range" type="range" min="0" max="1" step="0.01" value="0.5">
+              <div>Threshold: <span id="thVal">0.50</span></div>
+            </div>
+          </div>
+
+          <div class="mt-3">
+            <button id="predictBtn" type="button" class="btn btn-primary">Predict</button>
+            <button id="clearBtn" type="button" class="btn btn-outline-secondary">Clear</button>
+          </div>
+        </form>
+
+        <hr>
+        <div id="result" style="display:none;">
+          <h5>Prediction</h5>
+          <div id="summary"></div>
+          <div class="mt-2">
+            <div class="progress"><div id="probbar" class="progress-bar" role="progressbar" style="width:0%"></div></div>
+          </div>
+
+          <div id="explain_area" class="mt-3"></div>
+
+          <details class="mt-3"><summary>Raw API response</summary><pre id="raw" class="raw"></pre></details>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const apiUrl = "/predict";
+document.getElementById('threshold').addEventListener('input', (e) => {
+  document.getElementById('thVal').innerText = parseFloat(e.target.value).toFixed(2);
+});
+document.getElementById('clearBtn').addEventListener('click', () => {
+  document.getElementById('jobForm').reset();
+  document.getElementById('result').style.display = 'none';
+});
+
+document.getElementById('predictBtn').addEventListener('click', async () => {
+  const payload = {
+    title: document.getElementById('title').value,
+    company_profile: document.getElementById('company_profile').value,
+    description: document.getElementById('description').value,
+    requirements: document.getElementById('requirements').value,
+    benefits: document.getElementById('benefits').value,
+    raw_text: (document.getElementById('raw_text').value || "").trim() || null,
+    explain: document.getElementById('explain').value || null,
+    threshold: parseFloat(document.getElementById('threshold').value)
+  };
+
+  // UI: disable button and show loading
+  const btn = document.getElementById('predictBtn');
+  btn.disabled = true;
+  btn.innerText = 'Predicting...';
+
+  try {
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    // Show results
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('raw').innerText = JSON.stringify(data, null, 2);
+
+    if (data.error) {
+      document.getElementById('summary').innerHTML = '<div class="alert alert-danger">Error: '+data.error+'</div>';
+      document.getElementById('probbar').style.width = '0%';
+      document.getElementById('probbar').innerText = '';
+      document.getElementById('explain_area').innerHTML = '';
+    } else {
+      const prob = (data.prob_fake !== undefined) ? parseFloat(data.prob_fake) : null;
+      const label = data.label;
+      let labelText = label === 1 ? '<span class="text-danger fw-bold">Fake</span>' : '<span class="text-success fw-bold">Real</span>';
+      let html = `<p>Predicted: ${labelText} &nbsp; <small>(threshold ${payload.threshold})</small></p>`;
+      if (prob !== null) {
+        html += `<p>Probability of fake: <strong>${prob.toFixed(4)}</strong></p>`;
+        const perc = Math.round(prob * 100);
+        const bar = document.getElementById('probbar');
+        bar.style.width = perc + '%';
+        bar.innerText = perc + '%';
+        if (prob >= payload.threshold) {
+          bar.classList.remove('bg-success'); bar.classList.add('bg-danger');
+        } else {
+          bar.classList.remove('bg-danger'); bar.classList.add('bg-success');
+        }
+      }
+      document.getElementById('summary').innerHTML = html;
+
+      // Explanations
+      const area = document.getElementById('explain_area');
+      area.innerHTML = '';
+      if (data.lime_explanation) {
+        let out = '<h6>LIME explanation (word, weight)</h6><ul>';
+        data.lime_explanation.forEach(([w,wt]) => { out += `<li>${w} — ${wt.toFixed(4)}</li>`; });
+        out += '</ul>';
+        area.innerHTML = out;
+      } else if (data.shap_explanation) {
+        let se = data.shap_explanation;
+        if (se.error) {
+          area.innerHTML = `<div class="alert alert-warning">SHAP error: ${se.error}</div>`;
+        } else if (se.top_features) {
+          let out = '<h6>SHAP top features</h6><ul>';
+          se.top_features.forEach(it => { out += `<li>${it.feature} — ${it.shap_value.toFixed(4)}</li>`; });
+          out += '</ul>';
+          area.innerHTML = out;
+        } else {
+          area.innerHTML = '<div class="alert alert-info">No SHAP output.</div>';
+        }
+      } else {
+        area.innerHTML = '<small class="text-muted">No explanation requested.</small>';
+      }
+    }
+  } catch (err) {
+    document.getElementById('summary').innerHTML = '<div class="alert alert-danger">Request failed: '+err+'</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerText = 'Predict';
+  }
+});
+</script>
+</body>
+</html>
