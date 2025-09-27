@@ -1,4 +1,4 @@
-# app_flask.py
+# Importing Dependencies
 import os
 import re, html, traceback
 from typing import Optional, List, Dict, Any
@@ -13,22 +13,22 @@ import numpy as np
 from lime.lime_text import LimeTextExplainer
 import shap
 
-# ---------- CONFIG ----------
+# CONFIG
 MODEL_PATH = "best_model_xgb.joblib"
 VECT_PATH  = "tfidf_vectorizer.joblib"
 TEXT_COLS = ['title', 'company_profile', 'description', 'requirements', 'benefits']
 
-# ---------- FLASK SETUP ----------
+# FLASK SETUP
 app = Flask(__name__)
 
-# ---------- LOAD MODEL & VECTORIZER ----------
+# LOAD MODEL & VECTORIZER
 if not os.path.exists(MODEL_PATH) or not os.path.exists(VECT_PATH):
     raise FileNotFoundError(f"Please ensure {MODEL_PATH} and {VECT_PATH} exist in the working directory.")
 
 best_model = joblib.load(MODEL_PATH)
 tfidf = joblib.load(VECT_PATH)
 
-# ---------- PREPROCESSING ----------
+# PREPROCESSING
 _stop_words = set(stopwords.words('english'))
 _lemmatizer = WordNetLemmatizer()
 
@@ -53,7 +53,7 @@ def clean_text(text: Optional[str]) -> str:
     tokens = [_lemmatizer.lemmatize(tok) for tok in text.split() if tok not in _stop_words and len(tok) > 1]
     return " ".join(tokens)
 
-# ---------- PREDICTION HELPERS ----------
+# PREDICTION HELPERS
 def predict_proba_from_raw_texts(texts: List[str]) -> np.ndarray:
     cleaned = [clean_text(t) for t in texts]
     X = tfidf.transform(cleaned)
@@ -109,7 +109,7 @@ def shap_explain_single(raw_text: str, topn: int = 10) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"SHAP failed: {str(e)}"}
 
-# ---------- ROUTES ----------
+# ROUTES
 @app.route("/", methods=["GET"])
 def home():
     # Renders templates/index.html
@@ -143,7 +143,6 @@ def predict_endpoint():
         traceback.print_exc()
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
-# ---------- RUN ----------
+# RUN
 if __name__ == "__main__":
-    # DEV server — for production use gunicorn/uvicorn
     app.run(host="0.0.0.0", port=8000, debug=True)
